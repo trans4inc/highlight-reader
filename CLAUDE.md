@@ -44,6 +44,22 @@ The drawing line becomes a persistent highlight:
 
 Reference cards in the sidebar are sorted by document position, not selection time. If you highlight something in paragraph 4, its card appears below cards from paragraphs 1-3, regardless of when you made the selection.
 
+### Backend Architecture: Vercel Serverless Functions
+
+We evaluated three options for the backend proxy that holds the API key:
+
+1. **Vercel Serverless Functions** (chosen) — Deploy frontend + API together, auto-scaling, free tier, simple local dev with `vercel dev`
+2. **Separate Express Server** — More control, no cold starts, but two things to deploy/maintain
+3. **Cloudflare Workers** — Fastest, cheapest, global edge, but different runtime and separate deploy
+
+We chose **Vercel** for MVP simplicity: single deploy, minimal configuration, good enough performance. Can re-evaluate after MVP if needed.
+
+### API Key Approach
+
+For MVP: Single API key stored server-side in `.env` file (not committed to git). All users share this key.
+
+Future consideration: Allow users to bring their own API key. The architecture supports this — the frontend could send a user-provided key in the request header, and the backend would use it instead of the default. Not implementing for MVP to avoid over-engineering.
+
 ## Technical Approach
 
 ### Pointer Events for Pencil Input
@@ -81,30 +97,21 @@ Prevents Safari's contextual menu (Copy, Look Up, etc.) from appearing. We handl
 - Reference cards in sidebar, sorted by document order
 - Dismiss individual cards or clear all
 - Works on iPad Safari and desktop browsers
-
-**Mocked:**
-- AI explanations (placeholder text with 800ms simulated delay)
-- API calls fail due to CORS/no API key in browser
+- Real AI explanations via Anthropic Claude API
 
 ## Next Steps
 
-### 1. Backend Proxy for AI Calls
-Need a simple Express server to:
-- Hold the Anthropic API key securely
-- Proxy requests from the frontend
-- Handle CORS
-
-### 2. Content Loading
+### Content Loading
 Currently uses hardcoded sample text. Options to add:
 - URL input → fetch and display web page content
 - Document upload (PDF, DOCX, plain text)
 - Browser extension to run on any page
 
-### 3. Persistence
+### Persistence
 - Save highlights to localStorage for session persistence
 - Optional cloud sync for cross-device access
 
-### 4. Enhanced AI Features
+### Enhanced AI Features
 - Adjustable explanation depth (quick definition vs deep dive)
 - Context-aware explanations (knows what document you're reading)
 - Related terms suggestions
@@ -113,10 +120,13 @@ Currently uses hardcoded sample text. Options to add:
 
 ```
 highlight-reader/
+├── api/
+│   └── explain.js   ← Vercel serverless function for AI calls
 ├── src/
 │   ├── App.js       ← Main component with all logic
 │   ├── App.css      ← Styles including line overlay
 │   └── index.js     ← React entry point
+├── .env             ← API key (not committed)
 ├── package.json
 └── CLAUDE.md        ← This file
 ```
@@ -124,10 +134,11 @@ highlight-reader/
 ## Running Locally
 
 ```bash
-npm start                    # Start dev server on port 3000
-PORT=3001 npm start          # Use different port if 3000 is busy
-HOST=0.0.0.0 npm start       # Allow connections from other devices (iPad)
+vercel dev                       # Start dev server with API support (port 3000)
+vercel dev --listen 3001         # Use different port if 3000 is busy
 ```
+
+Note: `vercel dev` is required to run the serverless functions locally. Plain `npm start` will run the frontend but API calls will fail.
 
 To test on iPad: open `http://<mac-ip>:3000` in Safari (both devices on same network).
 
