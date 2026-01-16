@@ -114,12 +114,17 @@ export default function App() {
   }, [getWordData]);
 
   const handlePointerDown = useCallback((e) => {
-    // Only respond to pen or touch, not mouse (for easier testing, include mouse too)
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    
+    // Draw-to-select activates for:
+    // - Pen/stylus input (always)
+    // - Mouse with Shift key held (for desktop use)
+    // Regular mouse/touch uses native text selection
+    const isPen = e.pointerType === 'pen';
+    const isShiftClick = e.pointerType === 'mouse' && e.shiftKey;
+    if (!isPen && !isShiftClick) return;
+
     const articleRect = articleRef.current?.getBoundingClientRect();
     if (!articleRect) return;
-    
+
     // Check if pointer is within article bounds
     if (e.clientX < articleRect.left || e.clientX > articleRect.right ||
         e.clientY < articleRect.top || e.clientY > articleRect.bottom) {
@@ -525,7 +530,7 @@ export default function App() {
 
         <header className="document-header">
           <h1>{content.title}</h1>
-          <p>Draw a line across any words to learn more</p>
+          <p>Draw across words to highlight (Pencil or Shift+drag)</p>
         </header>
 
         {contentLoading ? (

@@ -17,6 +17,7 @@
 
 .word {
   cursor: default;
+  background: transparent;
 }
 
 .word-highlighted {
@@ -34,7 +35,7 @@ body {
 .container {
   display: flex;
   height: 100vh;
-  background: #f5f5f4;
+  background: white;
 }
 
 /* Document Panel */
@@ -269,11 +270,13 @@ body {
   overflow: auto;
   padding: 40px;
   -webkit-overflow-scrolling: touch;
+  background: white;
 }
 
 .document-content article {
   max-width: 640px;
   margin: 0 auto;
+  background: transparent;
 }
 
 .document-content p {
@@ -281,12 +284,9 @@ body {
   line-height: 1.7;
   color: #292524;
   margin-bottom: 24px;
+  background: transparent;
 }
 
-.document-content ::selection {
-  background: #fde68a;
-  color: #1c1917;
-}
 
 /* Sidebar */
 .sidebar {
