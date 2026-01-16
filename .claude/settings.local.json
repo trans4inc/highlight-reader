@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm start)"
+      "Bash(npm start)",
+      "Bash(xargs cat:*)",
+      "Bash(npm install:*)",
+      "Bash(curl:*)",
+      "Bash(git add:*)"
     ]
   }
 }

@@ -1,6 +1,22 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import './App.css';
 
+// Sanitize HTML to only allow <strong> and <em> tags
+const sanitizeHtml = (html) => {
+  if (!html) return '';
+  // Remove all HTML tags except <strong>, </strong>, <em>, </em>
+  return html
+    .replace(/<(?!\/?(?:strong|em)(?:\s|>))[^>]*>/gi, '')
+    .replace(/</g, (match, offset, str) => {
+      // Check if this < is part of an allowed tag
+      const rest = str.slice(offset);
+      if (/^<\/?(?:strong|em)(?:\s|>)/i.test(rest)) {
+        return match;
+      }
+      return '&lt;';
+    });
+};
+
 const sampleText = `The Renaissance was a fervent period of European cultural, artistic, political and economic "rebirth" following the Middle Ages. Generally described as taking place from the 14th century to the 17th century, the Renaissance promoted the rediscovery of classical philosophy, literature and art.
 
 Some of the greatest thinkers, authors, statesmen, scientists and artists in human history thrived during this era, while global exploration opened up new lands and cultures to European commerce. The Renaissance is credited with bridging the gap between the Middle Ages and modern-day civilization.
@@ -10,16 +26,33 @@ Florence, Italy, was the birthplace of the Renaissance. The Medici family, a wea
 The invention of the printing press by Johannes Gutenberg around 1440 revolutionized the spread of knowledge. Books became more accessible, literacy rates increased, and new ideas could spread across Europe with unprecedented speed. This democratization of knowledge was fundamental to the Renaissance spirit of inquiry and humanism.`;
 
 export default function App() {
+  // Content state
+  const [content, setContent] = useState({
+    type: 'sample',  // 'sample' | 'url' | 'file'
+    text: sampleText,
+    title: 'The Renaissance',
+    source: null,
+  });
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentError, setContentError] = useState(null);
+
+  // UI state for URL input
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [urlInputValue, setUrlInputValue] = useState('');
+
+  // Highlight state
   const [highlights, setHighlights] = useState([]);
   const [loadingId, setLoadingId] = useState(null);
   const [line, setLine] = useState(null); // { startX, endX, y }
   const [isDrawing, setIsDrawing] = useState(false);
   const [highlightedWordIndices, setHighlightedWordIndices] = useState({}); // { highlightId: [wordIndices] }
-  
+
   const articleRef = useRef(null);
   const wordRefs = useRef([]);
   const lineYRef = useRef(null);
   const startXRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const urlInputRef = useRef(null);
 
   // Get all word elements and their bounding boxes
   const getWordData = useCallback(() => {
@@ -173,16 +206,36 @@ export default function App() {
   }, [handlePointerMove, handlePointerUp]);
 
   const fetchExplanation = async (id, text) => {
-    // Simulate API delay for testing
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    setHighlights(prev => 
-      prev.map(h => 
-        h.id === id 
-          ? { ...h, explanation: `This is a placeholder explanation for "${text}". In production, this would be a real AI-generated response about this term from the Renaissance period.`, loading: false }
-          : h
-      )
-    );
+    try {
+      const response = await fetch('/api/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch explanation');
+      }
+
+      setHighlights(prev =>
+        prev.map(h =>
+          h.id === id
+            ? { ...h, explanation: data.explanation, loading: false }
+            : h
+        )
+      );
+    } catch (error) {
+      console.error('Error fetching explanation:', error);
+      setHighlights(prev =>
+        prev.map(h =>
+          h.id === id
+            ? { ...h, explanation: `Error: ${error.message}`, loading: false }
+            : h
+        )
+      );
+    }
     setLoadingId(null);
   };
 
@@ -199,6 +252,121 @@ export default function App() {
     setHighlights([]);
     setHighlightedWordIndices({});
   };
+
+  // Load new content and reset all highlight state
+  const loadNewContent = useCallback((newContent) => {
+    setHighlights([]);
+    setHighlightedWordIndices({});
+    wordRefs.current = [];
+    setLine(null);
+    setIsDrawing(false);
+    setContent(newContent);
+    setContentError(null);
+    articleRef.current?.scrollTo(0, 0);
+  }, []);
+
+  // Handle file upload
+  const handleFileSelect = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.name.endsWith('.txt') && file.type !== 'text/plain') {
+      setContentError('Please upload a plain text (.txt) file');
+      return;
+    }
+
+    // Validate file size (max 1MB)
+    if (file.size > 1024 * 1024) {
+      setContentError('File too large. Maximum size is 1MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      if (!text || text.trim().length === 0) {
+        setContentError('File appears to be empty');
+        return;
+      }
+      loadNewContent({
+        type: 'file',
+        text: text,
+        title: file.name.replace('.txt', ''),
+        source: file.name,
+      });
+    };
+    reader.onerror = () => {
+      setContentError('Failed to read file');
+    };
+    reader.readAsText(file);
+
+    // Reset input so same file can be re-selected
+    e.target.value = '';
+  }, [loadNewContent]);
+
+  // Handle URL fetch
+  const fetchUrl = useCallback(async (url) => {
+    // Basic URL validation
+    try {
+      new URL(url);
+    } catch {
+      setContentError('Please enter a valid URL');
+      return;
+    }
+
+    setContentLoading(true);
+    setContentError(null);
+
+    try {
+      const response = await fetch('/api/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch URL');
+      }
+
+      if (!data.content || data.content.trim().length === 0) {
+        throw new Error('No readable content found at this URL');
+      }
+
+      loadNewContent({
+        type: 'url',
+        text: data.content,
+        title: data.title || 'Untitled',
+        source: url,
+      });
+
+      setShowUrlInput(false);
+      setUrlInputValue('');
+    } catch (error) {
+      setContentError(error.message);
+    } finally {
+      setContentLoading(false);
+    }
+  }, [loadNewContent]);
+
+  // Reset to sample text
+  const loadSampleText = useCallback(() => {
+    loadNewContent({
+      type: 'sample',
+      text: sampleText,
+      title: 'The Renaissance',
+      source: null,
+    });
+  }, [loadNewContent]);
+
+  // Focus URL input when shown
+  useEffect(() => {
+    if (showUrlInput && urlInputRef.current) {
+      urlInputRef.current.focus();
+    }
+  }, [showUrlInput]);
 
   // Render text with each word wrapped in a span
   const renderText = (text) => {
@@ -251,21 +419,136 @@ export default function App() {
 
       {/* Document Panel */}
       <div className="document-panel">
+        {/* Source Bar */}
+        <div className="source-bar">
+          <div className="source-indicator">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span>
+              {content.type === 'sample' && 'Sample Text'}
+              {content.type === 'url' && (content.source ? new URL(content.source).hostname : 'URL')}
+              {content.type === 'file' && content.source}
+            </span>
+          </div>
+
+          <div className="source-buttons">
+            <div className="url-input-wrapper">
+              <button
+                onClick={() => setShowUrlInput(!showUrlInput)}
+                className="source-button"
+                disabled={contentLoading}
+              >
+                Load URL
+              </button>
+              {showUrlInput && (
+                <div className="url-input-popover">
+                  <input
+                    ref={urlInputRef}
+                    type="url"
+                    value={urlInputValue}
+                    onChange={(e) => setUrlInputValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && urlInputValue.trim()) {
+                        fetchUrl(urlInputValue.trim());
+                      }
+                      if (e.key === 'Escape') {
+                        setShowUrlInput(false);
+                        setUrlInputValue('');
+                      }
+                    }}
+                    placeholder="https://example.com/article"
+                    className="url-input-field"
+                    disabled={contentLoading}
+                  />
+                  <div className="url-input-actions">
+                    <button
+                      onClick={() => {
+                        setShowUrlInput(false);
+                        setUrlInputValue('');
+                      }}
+                      className="url-cancel-button"
+                      disabled={contentLoading}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => urlInputValue.trim() && fetchUrl(urlInputValue.trim())}
+                      className="url-fetch-button"
+                      disabled={contentLoading || !urlInputValue.trim()}
+                    >
+                      {contentLoading ? 'Loading...' : 'Fetch'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="source-button"
+              disabled={contentLoading}
+            >
+              Upload File
+            </button>
+            <input
+              type="file"
+              accept=".txt,text/plain"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
+
+            {content.type !== 'sample' && (
+              <button
+                onClick={loadSampleText}
+                className="source-button source-button-secondary"
+                disabled={contentLoading}
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Error message */}
+        {contentError && (
+          <div className="content-error">
+            <span>{contentError}</span>
+            <button onClick={() => setContentError(null)} className="error-dismiss">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         <header className="document-header">
-          <h1>The Renaissance</h1>
+          <h1>{content.title}</h1>
           <p>Draw a line across any words to learn more</p>
         </header>
-        
-        <main 
-          className="document-content"
-          onPointerDown={handlePointerDown}
-          ref={articleRef}
-          style={{ touchAction: 'none' }}
-        >
-          <article>
-            {renderText(sampleText)}
-          </article>
-        </main>
+
+        {contentLoading ? (
+          <div className="content-loading">
+            <div className="loading-dots">
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" />
+            </div>
+            <span>Fetching content...</span>
+          </div>
+        ) : (
+          <main
+            className="document-content"
+            onPointerDown={handlePointerDown}
+            ref={articleRef}
+            style={{ touchAction: 'none' }}
+          >
+            <article>
+              {renderText(content.text)}
+            </article>
+          </main>
+        )}
       </div>
 
       {/* Sidebar */}
@@ -326,7 +609,7 @@ export default function App() {
                         <span>Generating explanation...</span>
                       </div>
                     ) : (
-                      <p>{highlight.explanation}</p>
+                      <p dangerouslySetInnerHTML={{ __html: sanitizeHtml(highlight.explanation) }} />
                     )}
                   </div>
                 </div>

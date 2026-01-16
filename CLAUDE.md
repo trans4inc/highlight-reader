@@ -84,9 +84,15 @@ user-select: none;
 Prevents Safari's contextual menu (Copy, Look Up, etc.) from appearing. We handle selection entirely through our custom system.
 
 ### State Management
+- `content` — {type, text, title, source} for current document
 - `highlights` — array of {id, text, explanation, loading, firstWordIndex}
 - `highlightedWordIndices` — maps highlight IDs to arrays of word indices
 - `line` — current drawing line {startX, endX, y} or null
+
+### Content Loading
+- **URL fetch:** Backend `/api/fetch` uses `@mozilla/readability` + `jsdom` to extract article text
+- **File upload:** Client-side FileReader for .txt files (max 1MB)
+- When content changes, all highlights are cleared (word indices become invalid)
 
 ## Current State
 
@@ -98,13 +104,16 @@ Prevents Safari's contextual menu (Copy, Look Up, etc.) from appearing. We handl
 - Dismiss individual cards or clear all
 - Works on iPad Safari and desktop browsers
 - Real AI explanations via Anthropic Claude API
+- **Content Loading:**
+  - URL input — paste a URL, fetches and extracts article text using Mozilla Readability
+  - Plain text file upload — client-side file reading for .txt files
+  - Source bar shows current content source with Load URL / Upload File buttons
 
 ## Next Steps
 
-### Content Loading
-Currently uses hardcoded sample text. Options to add:
-- URL input → fetch and display web page content
-- Document upload (PDF, DOCX, plain text)
+### Content Loading (Future)
+- PDF upload (requires server-side parsing)
+- DOCX upload
 - Browser extension to run on any page
 
 ### Persistence
@@ -121,10 +130,11 @@ Currently uses hardcoded sample text. Options to add:
 ```
 highlight-reader/
 ├── api/
-│   └── explain.js   ← Vercel serverless function for AI calls
+│   ├── explain.js   ← Vercel serverless function for AI explanations
+│   └── fetch.js     ← Vercel serverless function for URL content fetching
 ├── src/
 │   ├── App.js       ← Main component with all logic
-│   ├── App.css      ← Styles including line overlay
+│   ├── App.css      ← Styles including line overlay, source bar
 │   └── index.js     ← React entry point
 ├── .env             ← API key (not committed)
 ├── package.json
