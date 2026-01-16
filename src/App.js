@@ -1,5 +1,6 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import './App.css';
+import { renderMarkdownToHtml } from './markdownRenderer';
 
 // Sanitize HTML to only allow <strong> and <em> tags
 const sanitizeHtml = (html) => {
@@ -32,6 +33,7 @@ export default function App() {
     text: sampleText,
     title: 'The Renaissance',
     source: null,
+    isMarkdown: false,
   });
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState(null);
@@ -56,15 +58,32 @@ export default function App() {
 
   // Get all word elements and their bounding boxes
   const getWordData = useCallback(() => {
-    return wordRefs.current
-      .map((el, index) => el ? {
-        el,
-        index,
-        text: el.textContent,
-        rect: el.getBoundingClientRect()
-      } : null)
-      .filter(w => w !== null);
-  }, []);
+    // For markdown content, query DOM directly to get fresh elements
+    // For plain text, use the refs
+    let elements;
+    if (content.isMarkdown && articleRef.current) {
+      elements = Array.from(articleRef.current.querySelectorAll('.word'));
+    } else {
+      elements = wordRefs.current;
+    }
+
+    const data = elements
+      .map((el, index) => {
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        // Get the data-index attribute for markdown elements
+        const dataIndex = el.getAttribute('data-index');
+        const idx = dataIndex !== null ? parseInt(dataIndex, 10) : index;
+        return {
+          el,
+          index: idx,
+          text: el.textContent,
+          rect
+        };
+      })
+      .filter(w => w !== null && w.rect.width > 0);
+    return data;
+  }, [content.isMarkdown]);
 
   // Find the text line (Y center) closest to a point
   const findLineY = useCallback((clientY) => {
@@ -102,25 +121,32 @@ export default function App() {
     const words = getWordData();
     const minX = Math.min(startX, endX);
     const maxX = Math.max(startX, endX);
-    
-    return words.filter(w => {
+
+    const matching = words.filter(w => {
       // Check if word is on the same line (within tolerance)
       const wordCenterY = (w.rect.top + w.rect.bottom) / 2;
       if (Math.abs(wordCenterY - lineY) > 15) return false;
-      
+
       // Check horizontal overlap
       return w.rect.right >= minX && w.rect.left <= maxX;
     });
+
+    return matching;
   }, [getWordData]);
 
   const handlePointerDown = useCallback((e) => {
     // Draw-to-select activates for:
     // - Pen/stylus input (always)
-    // - Mouse with Shift key held (for desktop use)
-    // Regular mouse/touch uses native text selection
+    // - Mouse without Shift key (regular click/drag)
+    // Shift+mouse uses native text selection (for copy/paste)
     const isPen = e.pointerType === 'pen';
-    const isShiftClick = e.pointerType === 'mouse' && e.shiftKey;
-    if (!isPen && !isShiftClick) return;
+    const isMouse = e.pointerType === 'mouse';
+    const isShiftHeld = e.shiftKey;
+
+    // Skip draw-to-select if Shift is held (allow native selection)
+    if (isMouse && isShiftHeld) return;
+    // Only activate for pen or mouse (not touch without pen)
+    if (!isPen && !isMouse) return;
 
     const articleRect = articleRef.current?.getBoundingClientRect();
     if (!articleRect) return;
@@ -132,7 +158,8 @@ export default function App() {
     }
 
     const lineY = findLineY(e.clientY);
-    if (!lineY) return;
+    // lineY of 0 could be valid if text is at top, but null means no words found
+    if (lineY === null) return;
 
     e.preventDefault();
     setIsDrawing(true);
@@ -163,8 +190,12 @@ export default function App() {
       return;
     }
 
-    const intersecting = findIntersectingWords(line.startX, line.endX, line.y);
-    
+    // Use the refs for the actual values since they're more reliable
+    const actualStartX = startXRef.current ?? line.startX;
+    const actualY = lineYRef.current ?? line.y;
+
+    const intersecting = findIntersectingWords(actualStartX, line.endX, actualY);
+
     if (intersecting.length > 0) {
       const selectedText = intersecting.map(w => w.text).join(' ');
       const wordIndices = intersecting.map(w => w.index);
@@ -190,6 +221,16 @@ export default function App() {
         }));
         setLoadingId(newHighlight.id);
         fetchExplanation(newHighlight.id, selectedText);
+
+        // For markdown content, immediately apply highlight class to DOM
+        if (content.isMarkdown) {
+          wordIndices.forEach(idx => {
+            const span = articleRef.current?.querySelector(`.word[data-index="${idx}"]`);
+            if (span) {
+              span.classList.add('word-highlighted');
+            }
+          });
+        }
       }
     }
 
@@ -197,7 +238,9 @@ export default function App() {
     setLine(null);
     lineYRef.current = null;
     startXRef.current = null;
-  }, [isDrawing, line, findIntersectingWords, highlights]);
+    // Clear any browser text selection that might have occurred
+    window.getSelection()?.removeAllRanges();
+  }, [isDrawing, line, findIntersectingWords, highlights, content.isMarkdown]);
 
   // Add global pointer event listeners
   useEffect(() => {
@@ -268,6 +311,8 @@ export default function App() {
     setContent(newContent);
     setContentError(null);
     articleRef.current?.scrollTo(0, 0);
+    // Clear any browser text selection
+    window.getSelection()?.removeAllRanges();
   }, []);
 
   // Handle file upload
@@ -276,8 +321,11 @@ export default function App() {
     if (!file) return;
 
     // Validate file type
-    if (!file.name.endsWith('.txt') && file.type !== 'text/plain') {
-      setContentError('Please upload a plain text (.txt) file');
+    const isMarkdown = file.name.endsWith('.md') || file.type === 'text/markdown';
+    const isText = file.name.endsWith('.txt') || file.type === 'text/plain';
+
+    if (!isMarkdown && !isText) {
+      setContentError('Please upload a .txt or .md file');
       return;
     }
 
@@ -297,8 +345,9 @@ export default function App() {
       loadNewContent({
         type: 'file',
         text: text,
-        title: file.name.replace('.txt', ''),
+        title: file.name.replace(/\.(txt|md)$/, ''),
         source: file.name,
+        isMarkdown: isMarkdown,
       });
     };
     reader.onerror = () => {
@@ -373,16 +422,40 @@ export default function App() {
     }
   }, [showUrlInput]);
 
-  // Render text with each word wrapped in a span
+  // Get all currently highlighted word indices
+  const allHighlightedIndices = useMemo(() => new Set(
+    Object.values(highlightedWordIndices).flat()
+  ), [highlightedWordIndices]);
+
+  // Render markdown to HTML with word spans AND highlights baked in
+  const markdownHtml = useMemo(() => {
+    if (!content.isMarkdown) return null;
+    // Pass highlighted indices so they're baked into the HTML
+    const { html } = renderMarkdownToHtml(content.text, allHighlightedIndices);
+    return html;
+  }, [content.isMarkdown, content.text, allHighlightedIndices]);
+
+  // Populate wordRefs from DOM after markdown renders
+  useEffect(() => {
+    if (content.isMarkdown && articleRef.current) {
+      // Use requestAnimationFrame to ensure DOM is painted
+      const rafId = requestAnimationFrame(() => {
+        const wordSpans = articleRef.current?.querySelectorAll('.word');
+        if (wordSpans) {
+          wordRefs.current = Array.from(wordSpans);
+        }
+      });
+      return () => cancelAnimationFrame(rafId);
+    }
+  }, [content.isMarkdown, markdownHtml]);
+
+  // Note: Highlights are now baked into markdownHtml via renderMarkdownToHtml
+
+  // Render text with each word wrapped in a span (for plain text)
   const renderText = (text) => {
     const paragraphs = text.split('\n\n');
     let wordIndex = 0;
-    
-    // Get all currently highlighted word indices
-    const allHighlightedIndices = new Set(
-      Object.values(highlightedWordIndices).flat()
-    );
-    
+
     return paragraphs.map((paragraph, pIdx) => (
       <p key={pIdx}>
         {paragraph.split(/(\s+)/).map((segment, sIdx) => {
@@ -498,7 +571,7 @@ export default function App() {
             </button>
             <input
               type="file"
-              accept=".txt,text/plain"
+              accept=".txt,.md,text/plain,text/markdown"
               ref={fileInputRef}
               onChange={handleFileSelect}
               style={{ display: 'none' }}
@@ -530,7 +603,7 @@ export default function App() {
 
         <header className="document-header">
           <h1>{content.title}</h1>
-          <p>Draw across words to highlight (Pencil or Shift+drag)</p>
+          <p>Draw across words to highlight (Shift+click for text selection)</p>
         </header>
 
         {contentLoading ? (
@@ -549,9 +622,13 @@ export default function App() {
             ref={articleRef}
             style={{ touchAction: 'none' }}
           >
-            <article>
-              {renderText(content.text)}
-            </article>
+            {content.isMarkdown ? (
+              <article dangerouslySetInnerHTML={{ __html: markdownHtml }} />
+            ) : (
+              <article>
+                {renderText(content.text)}
+              </article>
+            )}
           </main>
         )}
       </div>

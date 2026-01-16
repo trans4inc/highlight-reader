@@ -77,11 +77,12 @@ Each word is wrapped in a span with a ref. On pointer events, we:
 4. Lock the drawing line to that Y position
 5. On release, filter words that horizontally intersect the line span
 
-### Disabling Native Selection
-```css
-user-select: none;
-```
-Prevents Safari's contextual menu (Copy, Look Up, etc.) from appearing. We handle selection entirely through our custom system.
+### Input Mode Separation
+Native text selection is enabled for copy/paste functionality. Draw-to-select activates only for:
+- **Pen/stylus input** — always triggers draw-to-select (iPad with Pencil)
+- **Shift+drag with mouse** — desktop alternative for draw-to-select
+
+Regular mouse clicks and touch use native text selection, allowing users to copy text normally.
 
 ### State Management
 - `content` — {type, text, title, source} for current document
@@ -97,7 +98,8 @@ Prevents Safari's contextual menu (Copy, Look Up, etc.) from appearing. We handl
 ## Current State
 
 **Working:**
-- Draw-to-select with instant Pencil response
+- Draw-to-select with instant Pencil response (Shift+drag on desktop)
+- Native text selection for copy/paste
 - Visual line feedback during selection
 - Persistent underline on selected words
 - Reference cards in sidebar, sorted by document order
@@ -159,3 +161,33 @@ To test on iPad: open `http://<mac-ip>:3000` in Safari (both devices on same net
 - Animation: 300ms slide-in for new cards
 - Empty state: friendly prompt with pencil icon
 - The sidebar width is fixed (360px desktop, 320px mobile) to keep cards readable
+
+## Workflow
+
+STOP. Before saying "done" or presenting any work:
+
+1. Run `npm start` (and backend if applicable)
+2. Verify zero compilation errors
+3. Test the feature with `curl` or by checking the browser
+4. If anything fails, fix it first
+
+DO NOT present work to the user until you have confirmed it runs.
+
+If asked to build something, your final message must include:
+- What you tested
+- The result (working / errors found and fixed)
+
+## Debugging
+
+When errors occur:
+1. Read the full error message
+2. Check the relevant file and line number
+3. Explain what went wrong and why
+4. Fix it and verify the fix works
+
+## Git Hygiene
+
+After completing a feature:
+1. Stage changes: `git add .`
+2. Commit with a descriptive message: `git commit -m "Add feature X"`
+3. Push to remote: `git push`
