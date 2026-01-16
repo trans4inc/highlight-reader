@@ -92,7 +92,11 @@ Regular mouse clicks and touch use native text selection, allowing users to copy
 
 ### Content Loading
 - **URL fetch:** Backend `/api/fetch` uses `@mozilla/readability` + `jsdom` to extract article text
-- **File upload:** Client-side FileReader for .txt files (max 1MB)
+- **File upload:** Client-side FileReader for .txt and .md files (max 1MB)
+- **Paste content:** Click "Paste Content" button → paste zone appears → paste with ⌘V/Ctrl+V
+  - Converts HTML from clipboard to markdown (for pasting from ChatGPT/Claude web)
+  - Auto-detects markdown syntax in plain text
+  - Shows confirmation dialog if existing highlights would be cleared
 - When content changes, all highlights are cleared (word indices become invalid)
 
 ## Current State
@@ -108,8 +112,9 @@ Regular mouse clicks and touch use native text selection, allowing users to copy
 - Real AI explanations via Anthropic Claude API
 - **Content Loading:**
   - URL input — paste a URL, fetches and extracts article text using Mozilla Readability
-  - Plain text file upload — client-side file reading for .txt files
-  - Source bar shows current content source with Load URL / Upload File buttons
+  - File upload — client-side file reading for .txt and .md files
+  - Paste content — paste zone UI with HTML-to-markdown conversion for chatbot conversations
+  - Source bar shows current content source with Load URL / Upload File / Paste Content buttons
 
 ## Next Steps
 
@@ -135,9 +140,10 @@ highlight-reader/
 │   ├── explain.js   ← Vercel serverless function for AI explanations
 │   └── fetch.js     ← Vercel serverless function for URL content fetching
 ├── src/
-│   ├── App.js       ← Main component with all logic
-│   ├── App.css      ← Styles including line overlay, source bar
-│   └── index.js     ← React entry point
+│   ├── App.js              ← Main component with all logic
+│   ├── App.css             ← Styles including line overlay, source bar, paste zone
+│   ├── markdownRenderer.js ← Markdown to HTML conversion with highlight support
+│   └── index.js            ← React entry point
 ├── .env             ← API key (not committed)
 ├── package.json
 └── CLAUDE.md        ← This file
