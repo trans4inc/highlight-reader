@@ -42,6 +42,10 @@ export default function App() {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlInputValue, setUrlInputValue] = useState('');
 
+  // UI state for paste content
+  const [pasteMode, setPasteMode] = useState(false); // Shows paste zone in content area
+  const [showPasteConfirm, setShowPasteConfirm] = useState(false); // Confirmation dialog before entering paste mode
+
   // Highlight state
   const [highlights, setHighlights] = useState([]);
   const [loadingId, setLoadingId] = useState(null);
@@ -55,6 +59,7 @@ export default function App() {
   const startXRef = useRef(null);
   const fileInputRef = useRef(null);
   const urlInputRef = useRef(null);
+  const pasteZoneRef = useRef(null);
 
   // Get all word elements and their bounding boxes
   const getWordData = useCallback(() => {
@@ -415,12 +420,207 @@ export default function App() {
     });
   }, [loadNewContent]);
 
+  // Convert HTML to markdown-like format
+  const convertHtmlToMarkdown = useCallback((html) => {
+    // Create a temporary element to parse HTML
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const body = doc.body;
+
+    // Remove style and script tags
+    body.querySelectorAll('style, script').forEach(el => el.remove());
+
+    // Process the content
+    let result = '';
+
+    const processNode = (node, depth = 0) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.textContent;
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return '';
+      }
+
+      const tag = node.tagName.toLowerCase();
+      let content = '';
+
+      // Process children first
+      for (const child of node.childNodes) {
+        content += processNode(child, depth);
+      }
+
+      // Apply formatting based on tag
+      switch (tag) {
+        case 'h1':
+          return `\n# ${content.trim()}\n\n`;
+        case 'h2':
+          return `\n## ${content.trim()}\n\n`;
+        case 'h3':
+          return `\n### ${content.trim()}\n\n`;
+        case 'h4':
+          return `\n#### ${content.trim()}\n\n`;
+        case 'h5':
+          return `\n##### ${content.trim()}\n\n`;
+        case 'h6':
+          return `\n###### ${content.trim()}\n\n`;
+        case 'p':
+          return `${content.trim()}\n\n`;
+        case 'br':
+          return '\n';
+        case 'strong':
+        case 'b':
+          return `**${content}**`;
+        case 'em':
+        case 'i':
+          return `*${content}*`;
+        case 'code':
+          // Check if parent is pre (code block) or inline
+          if (node.parentElement?.tagName.toLowerCase() === 'pre') {
+            return content;
+          }
+          return `\`${content}\``;
+        case 'pre':
+          return `\n\`\`\`\n${content.trim()}\n\`\`\`\n\n`;
+        case 'blockquote':
+          return `\n> ${content.trim().replace(/\n/g, '\n> ')}\n\n`;
+        case 'ul':
+          return `\n${content}`;
+        case 'ol':
+          return `\n${content}`;
+        case 'li':
+          // Check if parent is ol or ul
+          const parent = node.parentElement?.tagName.toLowerCase();
+          if (parent === 'ol') {
+            const index = Array.from(node.parentElement.children).indexOf(node) + 1;
+            return `${index}. ${content.trim()}\n`;
+          }
+          return `- ${content.trim()}\n`;
+        case 'a':
+          const href = node.getAttribute('href');
+          // Only include links with http/https protocols
+          if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+            return `[${content}](${href})`;
+          }
+          return content;
+        case 'div':
+        case 'span':
+        case 'article':
+        case 'section':
+          return content;
+        case 'hr':
+          return '\n---\n\n';
+        default:
+          return content;
+      }
+    };
+
+    result = processNode(body);
+
+    // Clean up extra whitespace
+    result = result
+      .replace(/\n{3,}/g, '\n\n')  // Max 2 newlines
+      .replace(/^\s+/, '')          // Trim start
+      .replace(/\s+$/, '');         // Trim end
+
+    return result;
+  }, []);
+
+  // Detect if text looks like markdown
+  const detectMarkdown = useCallback((text) => {
+    // Check for common markdown patterns
+    const markdownPatterns = [
+      /^#{1,6}\s+.+/m,           // Headers: # Header
+      /\*\*[^*]+\*\*/,           // Bold: **text**
+      /\*[^*]+\*/,               // Italic: *text*
+      /^[-*+]\s+.+/m,            // Unordered lists: - item
+      /^\d+\.\s+.+/m,            // Ordered lists: 1. item
+      /```[\s\S]*?```/,          // Code blocks: ```code```
+      /`[^`]+`/,                 // Inline code: `code`
+      /^\s*>\s+.+/m,             // Blockquotes: > quote
+      /\[.+\]\(.+\)/,            // Links: [text](url)
+    ];
+
+    return markdownPatterns.some(pattern => pattern.test(text));
+  }, []);
+
+  // Handle clicking the Paste Content button
+  const handlePasteButtonClick = useCallback(() => {
+    // If there are existing highlights, show confirmation first
+    if (highlights.length > 0) {
+      setShowPasteConfirm(true);
+    } else {
+      // Enter paste mode directly
+      setPasteMode(true);
+    }
+  }, [highlights.length]);
+
+  // Confirm entering paste mode (clears highlights)
+  const confirmEnterPasteMode = useCallback(() => {
+    setShowPasteConfirm(false);
+    setPasteMode(true);
+  }, []);
+
+  // Cancel entering paste mode
+  const cancelPasteConfirm = useCallback(() => {
+    setShowPasteConfirm(false);
+  }, []);
+
+  // Exit paste mode without pasting
+  const exitPasteMode = useCallback(() => {
+    setPasteMode(false);
+  }, []);
+
+  // Handle paste event in paste zone
+  const handlePasteZonePaste = useCallback((e) => {
+    e.preventDefault();
+
+    // Try to get HTML first (richer formatting from web pages/chat interfaces)
+    const html = e.clipboardData?.getData('text/html');
+    const text = e.clipboardData?.getData('text');
+
+    if (!text || text.trim().length === 0) {
+      setContentError('Clipboard appears to be empty');
+      return;
+    }
+
+    // If we have HTML content, convert it to markdown-like format
+    let finalText = text;
+    let isMarkdown = false;
+
+    if (html && html.trim().length > 0) {
+      // Convert HTML to a simpler markdown-like format
+      finalText = convertHtmlToMarkdown(html);
+      isMarkdown = true;
+    } else {
+      // Check if raw text looks like markdown
+      isMarkdown = detectMarkdown(text);
+    }
+
+    const newContent = {
+      type: 'paste',
+      text: finalText.trim(),
+      title: 'Pasted Content',
+      source: 'Clipboard',
+      isMarkdown: isMarkdown,
+    };
+
+    loadNewContent(newContent);
+    setPasteMode(false);
+  }, [convertHtmlToMarkdown, detectMarkdown, loadNewContent]);
+
   // Focus URL input when shown
   useEffect(() => {
     if (showUrlInput && urlInputRef.current) {
       urlInputRef.current.focus();
     }
   }, [showUrlInput]);
+
+  // Focus paste zone when shown
+  useEffect(() => {
+    if (pasteMode && pasteZoneRef.current) {
+      pasteZoneRef.current.focus();
+    }
+  }, [pasteMode]);
 
   // Get all currently highlighted word indices
   const allHighlightedIndices = useMemo(() => new Set(
@@ -507,6 +707,7 @@ export default function App() {
               {content.type === 'sample' && 'Sample Text'}
               {content.type === 'url' && (content.source ? new URL(content.source).hostname : 'URL')}
               {content.type === 'file' && content.source}
+              {content.type === 'paste' && 'Pasted Content'}
             </span>
           </div>
 
@@ -563,6 +764,14 @@ export default function App() {
             </div>
 
             <button
+              onClick={handlePasteButtonClick}
+              className={`source-button ${pasteMode ? 'source-button-active' : ''}`}
+              disabled={contentLoading || pasteMode}
+            >
+              {pasteMode ? 'Paste Mode' : 'Paste Content'}
+            </button>
+
+            <button
               onClick={() => fileInputRef.current?.click()}
               className="source-button"
               disabled={contentLoading}
@@ -577,7 +786,7 @@ export default function App() {
               style={{ display: 'none' }}
             />
 
-            {content.type !== 'sample' && (
+            {(content.type !== 'sample') && (
               <button
                 onClick={loadSampleText}
                 className="source-button source-button-secondary"
@@ -614,6 +823,32 @@ export default function App() {
               <span className="dot" />
             </div>
             <span>Fetching content...</span>
+          </div>
+        ) : pasteMode ? (
+          <div
+            className="paste-zone"
+            ref={pasteZoneRef}
+            tabIndex={0}
+            onPaste={handlePasteZonePaste}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                exitPasteMode();
+              }
+            }}
+          >
+            <div className="paste-zone-content">
+              <div className="paste-zone-icon">
+                <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <h2>Paste your content</h2>
+              <p>Press <kbd>⌘V</kbd> (Mac) or <kbd>Ctrl+V</kbd> (Windows) to paste</p>
+              <p className="paste-zone-hint">Supports plain text and markdown</p>
+              <button onClick={exitPasteMode} className="paste-zone-cancel">
+                Cancel
+              </button>
+            </div>
           </div>
         ) : (
           <main
@@ -662,7 +897,7 @@ export default function App() {
           ) : (
             <div className="cards-container">
               {highlights.map((highlight) => (
-                <div 
+                <div
                   key={highlight.id}
                   className={`card ${highlight.id === loadingId ? 'card-new' : ''}`}
                 >
@@ -670,7 +905,7 @@ export default function App() {
                     <span className="highlight-badge">
                       {highlight.text}
                     </span>
-                    <button 
+                    <button
                       onClick={() => removeHighlight(highlight.id)}
                       className="remove-button"
                     >
@@ -679,7 +914,7 @@ export default function App() {
                       </svg>
                     </button>
                   </div>
-                  
+
                   <div className="card-content">
                     {highlight.loading ? (
                       <div className="loading">
@@ -700,6 +935,24 @@ export default function App() {
           )}
         </div>
       </aside>
+
+      {/* Confirmation Dialog */}
+      {showPasteConfirm && (
+        <div className="confirm-dialog-overlay">
+          <div className="confirm-dialog">
+            <h3>Replace Content?</h3>
+            <p>This will replace the current content and clear your {highlights.length} highlight{highlights.length === 1 ? '' : 's'}.</p>
+            <div className="confirm-dialog-actions">
+              <button onClick={cancelPasteConfirm} className="url-cancel-button">
+                Cancel
+              </button>
+              <button onClick={confirmEnterPasteMode} className="url-fetch-button">
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
